@@ -149,7 +149,8 @@ public class CSA {
 		return lines;
 	}
 	
-	//do a binary search to find the begin index in 
+	// do a binary search to find the begin index in 
+	// the array of connection departure times
 	public static int findBeginIndex(double t){
 		int lo=0; 
 		int hi=connectNumDaily;
@@ -504,54 +505,101 @@ public class CSA {
 	
 	public static void journeyGenerator(int fromStop, int toStop, double depTime){
 		
+		// Generate journey between fromStop and toStop
+		
+		// Initialize the queue for stops, routes and departure times
 		int[] backTrackingFromStop = new int[stopNum];
 		int[] backTrackingRoute = new int[stopNum]; //-1 is walking
 		double[] backTrackingTime = new double[stopNum]; // leaving time at the from stop
 		
-		
+		// Initialize the minimum reachable time for each stop
+		// to infinite, except for the fromStop, which is
+		// the departure time
+	
 		double[] minArriveTime = new double[stopNum];
 		for (int i=0;i<stopNum;i++){
 			minArriveTime[i]=999; 
 		}
 		minArriveTime[fromStop]=depTime;
+		
+		
+		// Implemented the CSA algorithm for fast transit planning
+		
+		// running variables
+		
+		// All available trips
 		Set<String> availTrips = new HashSet<String>(); 
 		int walkBeginIndex;
 		int walkEndIndex;
 		int beginIndex=findBeginIndex(depTime);
 		int currStop;
 		int walkToStop;
+		
+		// Iterate through all remaining connections in the day
 		for (int index=beginIndex;index<connectNumDaily;index++){
+			
+			// First, exit the loop if the departure time at the index exceeds the 
+			// current earliest arrival time at the toStop
 			if (connectDepTime[index]>minArriveTime[toStop]){
 				break;
 			}
-			//if the connection is reachable
+			
+			// Next, check if the connection is reachable
+			// if not, skip it
 			if (availTrips.contains(connectTripId[index])){
 				
-			}
-			else if(minArriveTime[connectFromStop[index]]<connectDepTime[index]){
+			} else if(minArriveTime[connectFromStop[index]]<connectDepTime[index]){
 				availTrips.add(connectTripId[index]);
-			}
-			else{
+			} else{
 				continue;
 			}
-			//if the connection can improve the destination stop
+			
+			// ok, then the connection is reachable, and has the 
+			// potential to improve the arrival time at destination stop
+			
+			// get the to stop of this connection
 			currStop=connectToStop[index];
+			
+			// we are interested only if the arrival time
+			// of this connection improves the current earliest
+			// arrival of its toStop
 			if (connectArrTime[index]<minArriveTime[currStop]){
+				
+				// update the earliest arrival time for this stop
 				minArriveTime[currStop]=connectArrTime[index];
-				//back tracking information
+				
+				// update the parent stop and connection
+				// that provides this arrival time
+				// back tracking information
 				backTrackingFromStop[currStop]=connectFromStop[index];
 				backTrackingRoute[currStop]=connectRoute[index];
 				backTrackingTime[currStop]=connectDepTime[index];
 				
-				//check walking transfer
+				
+				// check if any other stop can be reached 
+				// with a walking transfer 
 				walkBeginIndex=walkTransferBeginIndex[currStop];
 				walkEndIndex=walkTransferEndIndex[currStop];
+				
+				// only if there are reachable stops
+				// from currStop on foot
 				if (walkBeginIndex<walkEndIndex){
+					
+					// iterate through all walking connections
 					for(int j=walkBeginIndex; j<walkEndIndex; j++){
+						
+						// retrieve the walking connection
 						walkToStop=walkTransferArr[j];
+						
+						// if the updated arrival time at currStop plus a walking transfer
+						// provides a better arrival time walkToStop
 						if (minArriveTime[currStop]+walkTransferTimeArr[j]<minArriveTime[walkToStop]){
+							
+							// update the earliest arrival time for walk to stop
 							minArriveTime[walkToStop]=minArriveTime[currStop]+walkTransferTimeArr[j];
-							//back tracking information
+							
+							// and the parent stop and connection pointers
+							// back tracking information
 							backTrackingFromStop[walkToStop]=currStop;
 							backTrackingRoute[walkToStop]=-1;
 							backTrackingTime[walkToStop]=minArriveTime[currStop];
@@ -560,7 +608,12 @@ public class CSA {
 				}
 			}
 		}
-		//show back tracking info
+		
+		
+		
+		// extract the journey using the back pointers
+		// from the toStop to fromStop
+		// we get all stop, route and dep time sequences.
 		
 		currStop=toStop;
 		while(currStop!=fromStop){
@@ -572,28 +625,51 @@ public class CSA {
 	
 	
 	public static void main(String[] args) throws IOException {
+		
+		// Test the implementation of CSA for fast transit routing
+		
+		
+		// Load all required data
+		
+		// preprocess the data files
+		// routes
 		routeNum = countLines("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\routes.txt")-1;
 		routeNumDouble=2*routeNum;
+		routeId = new String[routeNumDouble];
+		
+		// trips (bus lines)
 		tripNum = countLines("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\trips.txt")-1;
+		
+		// stops
 		stopTimeNum = countLines("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\stop_times.txt")-1;
 		stopNum = countLines("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\stops.txt")-1;
 		stopId = new String[stopNum];
 		stopName = new String[stopNum];
 		stopLat = new double[stopNum];
 		stopLon = new double[stopNum];
-		routeId = new String[routeNumDouble];
+		
+		// get the current day of year and week
 		currentDay=getCurrentDay();
 		currentWeekDay=getCurrentWeekDay();
 		
+		// what is service id?
 		serviceId = new HashSet<String>();
+		
+		// load and parse the data
 		parseStop("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\stops.txt");
 		parseRoute("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\routes.txt");
 		parseTrip("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\trips.txt",
-				"G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\calendar.txt","G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\calendar_dates.txt");
+				"G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\calendar.txt",
+				"G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\calendar_dates.txt");
 		parseStopTime("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\stop_times.txt");
 		
 		
+		// compute the routes between two stops given a 
+		// departure time (percent time of day)
 		journeyGenerator(5911,6451,0.5);
+		
+		
+		
 		/*
 		Random rand = new Random();
 		int[] randFromStop = new int[10000];
