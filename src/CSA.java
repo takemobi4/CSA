@@ -12,9 +12,17 @@ import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.PriorityQueue;
 import java.util.Random;
 import java.util.Set;
+
+import transit.PTActivity;
+import transit.PTRoute;
+import transit.PTRouteComparator;
+import utils.Distance;
+import utils.NumUtils;
 
 
 public class CSA {
@@ -32,7 +40,8 @@ public class CSA {
 	public static double[] stopLat = new double[]{};
 	public static double[] stopLon = new double[]{};
 	public static String[] routeId = new String[]{};
-	
+	public static String[] routeName = new String[]{};
+
 	public static TimeSequencePair[] connectDepTimePair = new TimeSequencePair[]{};
 	public static double[] connectArrTime = new double[]{};
 	public static double[] connectDepTime = new double[]{};
@@ -78,10 +87,16 @@ public class CSA {
 	public static int currentDay; //like 20140101
 	public static int currentWeekDay; //1 to 7
 	
+	
 	//to generate shapes
 	public static HashMap<String, ArrayList<Double>> shapeMap = new HashMap<String, ArrayList<Double>>();
 	public static HashMap<String, String> tripShapeMap = new HashMap<String, String>(); 
-	public static Set<String> shapeSet = new HashSet<String>();  
+	public static Set<String> shapeSet = new HashSet<String>(); 
+	
+	static double busUncertainty = 0.05; // uncertainty in bus
+	static double busArriveUncertainty = 1.5; // uncertainty in bus (in millisecond)
+	static double walkingSpeed = 60.0; // meter per minute
+	static double stop_transfer_time=0.0035; 
 	
 	public static int getCurrentDay(){
 		Calendar cal = Calendar.getInstance();
@@ -491,19 +506,19 @@ public class CSA {
 		connectFromStopOrdered=null;
 		connectToStopOrdered=null;
 		
-		File writename = new File("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\Connection.txt");
-		writename.createNewFile(); 
-        BufferedWriter out = new BufferedWriter(new FileWriter(writename));
-		for (int i=0;i<connectNumDaily;i++){
-			out.write(connectFromStop[i]+" "+connectToStop[i]+"\r\n");
-			out.flush();
-		}
-		out.close();
+//		File writename = new File("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\Connection.txt");
+//		writename.createNewFile(); 
+//        BufferedWriter out = new BufferedWriter(new FileWriter(writename));
+//		for (int i=0;i<connectNumDaily;i++){
+//			out.write(connectFromStop[i]+" "+connectToStop[i]+"\r\n");
+//			out.flush();
+//		}
+//		out.close();
 		
 		
 	}
 	
-	public static void journeyGenerator(int fromStop, int toStop, double depTime){
+	public static TransitRoutingMap journeyGenerator(int fromStop, int toStop, double depTime){
 		
 		// Generate journey between fromStop and toStop
 		
@@ -609,40 +624,245 @@ public class CSA {
 			}
 		}
 		
-		
-		
-		// extract the journey using the back pointers
-		// from the toStop to fromStop
-		// we get all stop, route and dep time sequences.
-		
-		currStop=toStop;
-		while(currStop!=fromStop){
-			System.out.println(backTrackingFromStop[currStop]+" "+backTrackingRoute[currStop]+" "+backTrackingTime[currStop]);
+		currStop = toStop;
+		while(currStop != fromStop){
+			
+			String stop = stopName[backTrackingFromStop[currStop]]; 
+			String route = routeId[backTrackingRoute[currStop]]; 
+			double time = backTrackingTime[currStop]; 
+
+			System.out.println(stop+"\t"+route+"\t"+time);
+			
+			// if there is a route id change, it means the end of this bus route
+			
+			
+			
+			// if the new route id is -1, then we add a walking transfer 
+			
 			currStop=backTrackingFromStop[currStop];
 		}
 		
+		return new TransitRoutingMap(backTrackingFromStop,backTrackingRoute,backTrackingTime);
 	}
 	
+	public PriorityQueue<PTRoute> findPublicTransit(double precentOfDay,double lat1, double lon1, double lat2, double lon2,
+			boolean hasCard, boolean hasPass, double walk_dist_thres){
+		
+		PriorityQueue<PTRoute> ptRoutes = new PriorityQueue<PTRoute>(10,new PTRouteComparator());
+		
+		// First, get the from and to stops using the 
+		// origin and destination lat/lon
+		
+		List<Integer> from_stops = new ArrayList<Integer>();
+		List<Integer> to_stops = new ArrayList<Integer>();
+		
+		for (int i=0;i<stopNum;i++){
+			if (Distance.distBetween(lat1,lon1,stopLat[i],stopLon[i])<walk_dist_thres){
+				from_stops.add(i);
+			}
+			
+			if (Distance.distBetween(lat2,lon2,stopLat[i],stopLon[i])<walk_dist_thres){
+				to_stops.add(i);
+			}
+		}
+
+		// return an empty list if no stops can be found near the
+		// origin or destination
+		if (from_stops.isEmpty() || to_stops.isEmpty()){
+			return ptRoutes;
+		}
+		
+		// Next, iterate through pairs of stops and find routes
+		// that connects them
+		
+		int routeCounter = 1;
+		
+		for (int from_stop_idx : from_stops){
+			for (int to_stop_idx : to_stops){
+				
+				TransitRoutingMap map = journeyGenerator(from_stop_idx,to_stop_idx,precentOfDay);
+
+				// Store it using a PTRoute object
+				// The template for a pt route is:
+				// walk from origin to stop1
+				// wait at stop1
+				// transit from stop1 to stop2
+				// walk from stop2 to stop3
+				// wait at stop3
+				// transit from stop3 to stop4
+				// walk from stop4 to destination
+				
+				PTRoute newRoute = new PTRoute("Public Transit " + routeCounter);
+				routeCounter++;
+				
+				// First activity, walk to the departure stop
+				double walkTime = NumUtils.roundTwoDecimals(1.414*Distance.distBetween(lat1,lon1,stopLat[from_stop_idx],stopLon[from_stop_idx])/walkingSpeed);
+				PTActivity walkToFromStop = new PTActivity("Walk to "+stopName[from_stop_idx],
+						walkTime,Double.POSITIVE_INFINITY,"Controllable;Activity;Walk","origin",stopName[from_stop_idx]
+						,lat1,lon1,stopLat[from_stop_idx],stopLon[from_stop_idx]);
+				walkToFromStop.isWalk = true;
+				walkToFromStop.details.append("checkpoint:t;;");
+
+				newRoute.addActivity(walkToFromStop);
+				
+				// extract the journey using the back pointers
+				// from the toStop to fromStop
+				// we get all stop, route and dep time sequences.
+
+				LinkedList<PTActivity> activities = new LinkedList<PTActivity>();
+				
+				int currStop = to_stop_idx;
+				int arrStop = -10;
+				int currRoute = -10;
+				int prevRoute = -10;
+				
+				while(currStop != from_stop_idx){
+
+					currRoute = map.backTrackingRoute[currStop]; 
+					
+					// if there is a route id change, it means we are starting a new route
+					if (currRoute != prevRoute){												
+						
+						if (prevRoute == -1){
+							
+							// switching from a walking transfer
+							// finalize the walking activity
+							
+							walkTime = NumUtils.roundTwoDecimals(1.414*Distance.distBetween(
+									stopLat[currStop],stopLon[currStop],stopLat[arrStop],stopLon[arrStop])/walkingSpeed);
+							PTActivity walkBetweenStops = new PTActivity("Walk from "+stopName[currStop]+" to "+stopName[arrStop],
+									walkTime,Double.POSITIVE_INFINITY,"Controllable;Activity;Walk",stopName[currStop],stopName[arrStop]
+									,stopLat[currStop],stopLon[currStop],stopLat[arrStop],stopLon[arrStop]);
+							
+							walkBetweenStops.details.append("checkpoint:t;;");
+							walkBetweenStops.isWalk = true;
+							
+							activities.add(walkBetweenStops);
+							
+						} else if (prevRoute != -10) {
+							
+							// finalize the transit activity and associated waiting
+							
+							String route_name = routeName[prevRoute];
+							String route_id = routeId[prevRoute]; 
+							
+							String routeType = "Bus";
+							if (route_id.contains("CR-")){
+								routeType = "Commuter Rail";
+							} else if (route_name.contains("Line")){
+								routeType = "Subway";
+							} else if (route_id.contains("Boat")){
+								routeType = "Ferry";
+							}
+							
+							String direction = "0";
+							if (route_id.contains("D1")){
+								direction = "1";
+							}
+							
+							double dep_time = map.backTrackingTime[currStop]; 
+							double arr_time = map.backTrackingTime[arrStop]; 
+							double duration = (arr_time-dep_time)*1440;
+							
+							double onTransitLB = NumUtils.roundTwoDecimals(duration*(1-busUncertainty));
+							double onTransitUB = NumUtils.roundTwoDecimals(duration*(1+busUncertainty));
+							
+							PTActivity transit = new PTActivity("Take " + route_name+" from "+stopName[currStop]+" to "+stopName[arrStop],
+									onTransitLB,onTransitUB,"Uncontrollable;Activity;"+routeType,
+									route_name, route_id, routeType, stopName[currStop], stopName[arrStop],
+									stopLat[currStop],stopLon[currStop],stopLat[arrStop],stopLon[arrStop],
+									direction);	
+							
+							// need to wait for the bus here							
+							PTActivity waitAtStop = new PTActivity("Wait at "+stopName[currStop],
+									1.0,Double.POSITIVE_INFINITY,"Controllable;Activity;Wait",stopName[currStop],stopName[currStop]
+									,stopLat[currStop],stopLon[currStop],stopLat[currStop],stopLon[currStop]);	
+							
+							transit.fromStopID = stopId[currStop];
+							transit.toStopID = stopId[arrStop];
+							
+							transit.details.append("checkpoint:t;;");
+							transit.polyline.addAll(findPolyline(route_id,currStop,arrStop));
+
+							transit.isTransit = true;
+							waitAtStop.isWait = true;
+							
+							transit.details.append("type:"+routeType+";;");
+							transit.details.append("id:"+route_id+";;");
+							transit.details.append("direction:"+direction+";;");
+							transit.details.append("line:"+route_name+";;");
+							transit.details.append("duration:"+duration+";;");
+							transit.details.append("departure_stop:"+stopName[currStop]+";;");
+							transit.details.append("arrival_stop:"+stopName[arrStop]+";;");
+							
+							
+							transit.busArrivalTimes.add(new double[]{dep_time*1440,dep_time*1440-busArriveUncertainty,dep_time*1440+busArriveUncertainty});
+							
+							if (hasPass) {
+								transit.cost = 0.0;
+							} else if (hasCard) {
+								transit.cost = -2.1;
+							} else {
+								transit.cost = -2.65;
+							}
+							
+							activities.add(transit);
+							activities.add(waitAtStop);
+						}
+						
+						arrStop = currStop;
+						
+					} else {
+						// else we do nothing
+					}
+
+					prevRoute = currRoute;
+					currStop=map.backTrackingFromStop[currStop];
+				}
+								
+				// Reverse the order and add activities to the route
+				while (!activities.isEmpty()){
+					newRoute.addActivity(activities.pollLast());
+				}			
+				
+				// Finally, walk to the destination from the arrival stop
+				walkTime = NumUtils.roundTwoDecimals(1.414*Distance.distBetween(stopLat[to_stop_idx],stopLon[to_stop_idx],lat2,lon2)/walkingSpeed);
+				PTActivity walkToDestination = new PTActivity("Walk from "+stopName[to_stop_idx]+" to Destination",
+						walkTime,Double.POSITIVE_INFINITY,"Controllable;Activity;Walk",stopName[to_stop_idx],"destination"
+						,stopLat[to_stop_idx],stopLon[to_stop_idx],lat2,lon2);
+				
+				walkToDestination.isWalk = true;
+				walkToDestination.details.append("checkpoint:t;;");
+
+				newRoute.addActivity(walkToDestination);			
+				
+				ptRoutes.add(newRoute);
+			}
+		}
+
+		return ptRoutes;
+	}
 	
 	public static void main(String[] args) throws IOException {
 		
 		// Test the implementation of CSA for fast transit routing
-		
-		
+		String mbta_folder = "/Users/yupeng/Dropbox/Code/Applications/Mobi/MBTA_GTFS/";
+		//String mbta_folder = "G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\";
+
 		// Load all required data
 		
 		// preprocess the data files
 		// routes
-		routeNum = countLines("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\routes.txt")-1;
+		routeNum = countLines(mbta_folder+"routes.txt")-1;
 		routeNumDouble=2*routeNum;
 		routeId = new String[routeNumDouble];
 		
 		// trips (bus lines)
-		tripNum = countLines("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\trips.txt")-1;
+		tripNum = countLines(mbta_folder+"trips.txt")-1;
 		
 		// stops
-		stopTimeNum = countLines("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\stop_times.txt")-1;
-		stopNum = countLines("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\stops.txt")-1;
+		stopTimeNum = countLines(mbta_folder+"stop_times.txt")-1;
+		stopNum = countLines(mbta_folder+"stops.txt")-1;
 		stopId = new String[stopNum];
 		stopName = new String[stopNum];
 		stopLat = new double[stopNum];
@@ -656,18 +876,20 @@ public class CSA {
 		serviceId = new HashSet<String>();
 		
 		// load and parse the data
-		parseStop("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\stops.txt");
-		parseRoute("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\routes.txt");
-		parseTrip("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\trips.txt",
-				"G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\calendar.txt",
-				"G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\calendar_dates.txt");
-		parseStopTime("G:\\M\\Bus\\MBTA\\GTFS\\MBTA_GTFS14Fall\\stop_times.txt");
+		parseStop(mbta_folder+"stops.txt");
+		parseRoute(mbta_folder+"routes.txt");
+		parseTrip(mbta_folder+"trips.txt",
+				mbta_folder+"calendar.txt",
+				mbta_folder+"calendar_dates.txt");
+		parseStopTime(mbta_folder+"stop_times.txt");
 		
-		
+		System.out.println("Data loaded");
+		System.out.println("Routing starts");
+		long start = System.currentTimeMillis();
 		// compute the routes between two stops given a 
 		// departure time (percent time of day)
 		journeyGenerator(5911,6451,0.5);
-		
+		System.out.println("Routing complete: " + (System.currentTimeMillis() - start));
 		
 		
 		/*
