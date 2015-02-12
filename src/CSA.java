@@ -257,6 +257,16 @@ public class CSA {
 			routeIdMap.put(routeId[2*i], 2*i);
 			routeId[2*i+1]=elements[1]+"D1";
 			routeIdMap.put(routeId[2*i+1], 2*i+1);
+			
+			elements = line.split(",");
+
+			if (elements[2].length() > elements[3].length()){
+				routeName[2*i] = elements[2].replace("\"", "");
+				routeName[2*i+1] = elements[2].replace("\"", "");
+			} else {
+				routeName[2*i] = elements[3].replace("\"", "");
+				routeName[2*i+1] = elements[3].replace("\"", "");
+			}
 		}
 		br.close();
 	}
