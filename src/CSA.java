@@ -533,9 +533,9 @@ public class CSA {
 		// Generate journey between fromStop and toStop
 		
 		// Initialize the queue for stops, routes and departure times
-		int[] backTrackingFromStop = new int[stopNum];
-		int[] backTrackingRoute = new int[stopNum]; //-1 is walking
-		double[] backTrackingTime = new double[stopNum]; // leaving time at the from stop
+		int[] stopParent = new int[stopNum];
+		int[] stopRoute = new int[stopNum]; //-1 is walking
+		double[] stopDepTime = new double[stopNum]; // leaving time at the from stop
 		
 		// Initialize the minimum reachable time for each stop
 		// to infinite, except for the fromStop, which is
@@ -596,9 +596,9 @@ public class CSA {
 				// update the parent stop and connection
 				// that provides this arrival time
 				// back tracking information
-				backTrackingFromStop[currStop]=connectFromStop[index];
-				backTrackingRoute[currStop]=connectRoute[index];
-				backTrackingTime[currStop]=connectDepTime[index];
+				stopParent[currStop]=connectFromStop[index];
+				stopRoute[currStop]=connectRoute[index];
+				stopDepTime[currStop]=connectDepTime[index];
 				
 				
 				// check if any other stop can be reached 
@@ -625,9 +625,9 @@ public class CSA {
 							
 							// and the parent stop and connection pointers
 							// back tracking information
-							backTrackingFromStop[walkToStop]=currStop;
-							backTrackingRoute[walkToStop]=-1;
-							backTrackingTime[walkToStop]=minArriveTime[currStop];
+							stopParent[walkToStop]=currStop;
+							stopRoute[walkToStop]=-1;
+							stopDepTime[walkToStop]=minArriveTime[currStop];
 						}
 					}
 				}
@@ -635,24 +635,35 @@ public class CSA {
 		}
 		
 		currStop = toStop;
+		String prev_route = routeId[stopRoute[currStop]]; 
+		String prev_route_name = routeName[stopRoute[currStop]];
+		
 		while(currStop != fromStop){
 			
-			String stop = stopName[backTrackingFromStop[currStop]]; 
-			String route = routeId[backTrackingRoute[currStop]]; 
-			double time = backTrackingTime[currStop]; 
+			String stop = stopName[stopParent[currStop]]; 
+			String route = routeId[stopRoute[currStop]]; 
+			String route_name = routeName[stopRoute[currStop]];
+			double time = stopDepTime[currStop]; 
 
-			System.out.println(stop+"\t"+route+"\t"+time);
+
+			System.out.println(stop+"("+stopParent[currStop]+")"+"\t"
+							+route+"/"+route_name+"("+stopRoute[currStop]+")"
+							+"\t"+time);
+		
+			currStop=stopParent[currStop];
 			
-			// if there is a route id change, it means the end of this bus route
+			prev_route = routeId[stopRoute[currStop]]; 
+			prev_route_name = routeName[stopRoute[currStop]];
 			
 			
+			if (route != prev_route){
+				System.out.println("Changing from " + prev_route_name + "(" + prev_route + ") to " 
+						+ route_name + "(" + route + ") at " + stop);
+			}
 			
-			// if the new route id is -1, then we add a walking transfer 
-			
-			currStop=backTrackingFromStop[currStop];
 		}
 		
-		return new TransitRoutingMap(backTrackingFromStop,backTrackingRoute,backTrackingTime);
+		return new TransitRoutingMap(stopParent,stopRoute,stopDepTime);
 	}
 	
 	public PriorityQueue<PTRoute> findPublicTransit(double precentOfDay,double lat1, double lon1, double lat2, double lon2,
@@ -728,14 +739,15 @@ public class CSA {
 				
 				while(currStop != from_stop_idx){
 
-					currRoute = map.backTrackingRoute[currStop]; 
+					currRoute = map.stopRoute[currStop]; 
+					prevRoute = map.stopRoute[map.stopParent[currStop]];
 					
 					// if there is a route id change, it means we are starting a new route
-					if (currRoute != prevRoute){												
+					if (prevRoute != currRoute){												
 						
-						if (prevRoute == -1){
+						if (currRoute == -1){
 							
-							// switching from a walking transfer
+							// switching to a walking transfer
 							// finalize the walking activity
 							
 							walkTime = NumUtils.roundTwoDecimals(1.414*Distance.distBetween(
@@ -749,12 +761,12 @@ public class CSA {
 							
 							activities.add(walkBetweenStops);
 							
-						} else if (prevRoute != -10) {
+						} else if (currRoute != -10) {
 							
 							// finalize the transit activity and associated waiting
 							
-							String route_name = routeName[prevRoute];
-							String route_id = routeId[prevRoute]; 
+							String route_name = routeName[currRoute];
+							String route_id = routeId[currRoute]; 
 							
 							String routeType = "Bus";
 							if (route_id.contains("CR-")){
@@ -770,8 +782,8 @@ public class CSA {
 								direction = "1";
 							}
 							
-							double dep_time = map.backTrackingTime[currStop]; 
-							double arr_time = map.backTrackingTime[arrStop]; 
+							double dep_time = map.stopDepTime[currStop]; 
+							double arr_time = map.stopDepTime[arrStop]; 
 							double duration = (arr_time-dep_time)*1440;
 							
 							double onTransitLB = NumUtils.roundTwoDecimals(duration*(1-busUncertainty));
@@ -825,9 +837,8 @@ public class CSA {
 					} else {
 						// else we do nothing
 					}
-
-					prevRoute = currRoute;
-					currStop=map.backTrackingFromStop[currStop];
+					
+					currStop=map.stopParent[currStop];
 				}
 								
 				// Reverse the order and add activities to the route
@@ -866,7 +877,8 @@ public class CSA {
 		routeNum = countLines(mbta_folder+"routes.txt")-1;
 		routeNumDouble=2*routeNum;
 		routeId = new String[routeNumDouble];
-		
+		routeName = new String[routeNumDouble];
+
 		// trips (bus lines)
 		tripNum = countLines(mbta_folder+"trips.txt")-1;
 		

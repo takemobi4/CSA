@@ -2,14 +2,14 @@ package src;
 
 public class TransitRoutingMap {
 	
-	public int[] backTrackingFromStop;
-	public int[] backTrackingRoute;
-	public double[] backTrackingTime;
+	public int[] stopParent;
+	public int[] stopRoute;
+	public double[] stopDepTime;
 	
-	public TransitRoutingMap(int[] _backTrackingFromStop, int[] _backTrackingRoute, double[] _backTrackingTime){
-		backTrackingFromStop = _backTrackingFromStop;
-		backTrackingRoute = _backTrackingRoute;
-		backTrackingTime = _backTrackingTime;
+	public TransitRoutingMap(int[] _stopParent, int[] _stopRoute, double[] _stopDepTime){
+		stopParent = _stopParent;
+		stopRoute = _stopRoute;
+		stopDepTime = _stopDepTime;
 	}
 	
 }
